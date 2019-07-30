@@ -99,6 +99,47 @@ prep_inla_objects <- function(data, outcome_varname, ss_varname){
 
 
 
+#' Wrapper for inla
+#'
+#' @param input object which is output from prep_inla_objects()
+#' @param model_family currently only support for binomial or gaussian
+#'
+#' @return
+#' @export Fitted inla model object
+run_inla_model <- function(input, model_family){
+  if(!tolower(model_family) %in% c('binomial','gaussian'))
+    stop('Currently only support for binomial or gaussian models')
+  
+  if(tolower(model_family) == 'binomial'){
+    message('Fitting BINOMIAL model')
+    fit <- inla(formula           = input[['formula']],
+                data              = inla.stack.data(input_obj[['stack']]),
+                control.predictor = list(A       = inla.stack.A(input_obj[['stack']]),
+                                         link    = 1,
+                                         compute = FALSE),
+                control.fixed     = list(expand.factor.strategy = 'inla'),
+                family            = 'binomial',
+                num.threads       = 1,
+                Ntrials           = input_obj[['N']],
+                verbose           = TRUE,
+                keep              = FALSE)
+  } else if(tolower(model_family) == 'gaussian'){
+    message('Fitting GAUSSIAN model')
+    fit <- inla(formula           = input[['formula']],
+                data              = inla.stack.data(input_obj[['stack']]),
+                control.predictor = list(A       = inla.stack.A(input_obj[['stack']]),
+                                         compute = FALSE),
+                control.fixed     = list(expand.factor.strategy = 'inla'),
+                family            = 'Gaussian',
+                num.threads       = 1,
+                scale             = input_obj[['N']],
+                verbose           = TRUE,
+                keep              = FALSE)
+  }
+  
+  return(fit)
+}
+
 
 
 
@@ -154,6 +195,7 @@ inla_predict <- function(fitted, input, ndraws, predfr, ext_raster){
               raster       = predsumr))
   
 }
+
 
 
 

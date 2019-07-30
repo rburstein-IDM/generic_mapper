@@ -15,7 +15,7 @@
 ## User inputs. 
 ## TODO: update this to be a config file
 
-# model family
+# model family (binomial or gaussian only)
 family <- 'binomial'
 
 # number of drawws from the posterior to take. 
@@ -27,6 +27,7 @@ outcome_varname <- 'dpt'
 
 # where your local copy of the generic_mapper repo is (clone from here: https://github.com/rburstein-IDM/generic_mapper)
 codepath  <- 'C:/Users/rburstein/OneDrive - IDMOD/code/generic_mapper'
+
 
 
 ## ###########################################################
@@ -42,7 +43,7 @@ for(l in libs){
     message( sprintf('Did not have the required package << %s >> installed. Downloading now ... ',l))
     install.packages(l) 
   }
-  library(l,character.only=TRUE)
+  library(l, character.only = TRUE, quietly = TRUE)
 }
 
 ## locations - relative to user, but in AMUG Dropbox. Make sure you have access to AMUG to use
@@ -60,18 +61,19 @@ d       <- fread(sprintf('%s/data/prepped_input/XXXX.csv',datpath))
 shp <- st_read(dsn = sprintf('%s/WHO_POLIO_GLOBAL_GEODATABASE.gdb',datpath), layer = 'GLOBAL_ADM2')
 shp <- subset(shp, as.Date(ENDDATE) >= Sys.Date() & ADM0_VIZ_NAME == "Democratic Republic of the Congo")
 
+# load population raster
+#TODO
 
 
 
 ## ###########################################################
 ## Clean up and prep data
 
-
 # make a raster version of the country shapefile
-ext_raster <- trim(fasterize(shp, dpt1))
+ext_raster <- trim(fasterize(shp, pop))
 
 # rasterize the gadm file
-rshp <- fasterize(sf = shp, raster = dpt3[[1]], field = 'id')
+rshp <- fasterize(sf = shp, raster = pop, field = 'id')
 
 # make a prediction frame representing the full raster
 predfr <- data.table(idx = 1:ncell(get(rlist[1])), adm2 = as.vector(rshp))
@@ -84,32 +86,17 @@ predfr[, lat := coordinates(ext_raster)[,2]]
 
 
 ## ###########################################################
-## Basic geostats model using INLA (currently with most settings at default)
+## Basic geostats model using INLA (currently with most settings (such as priors) at default)
 
 # get together all the various objects needed for inla to fit the model
 input_obj <- prep_inla_objects(data = d, outcome_varname = outcome_varname, ss_varname = 'N')
 
-  
 # fit inla model
-res_fit <- inla(input_obj[['formula']],
-                data = inla.stack.data(input_obj[['stack']]),
-                control.predictor = list(A       = inla.stack.A(input_obj[['stack']]),
-                                         link    = 1,
-                                         compute = FALSE),
-                control.fixed     = list(expand.factor.strategy = 'inla'),
-                family            = family,
-                num.threads       = 1,
-                Ntrials           = input_obj[['N']],
-                verbose           = TRUE,
-                keep              = FALSE)
-
+res_fit <- run_inla_model(input = input_obj, model_family = family)
 summary(res_fit)
   
- 
-
 # do prediction from the fitted model
 pred <- inla_predict(fitted = res_fit, input = input_obj, ndraws = ndraws, predfr = predfr, ext_raster = ext_raster)
-
 
 # the outputs of prediction with match ext_raster. In the following, aggregate them to the inputted shapefile
 agg_res  <- aggregate_results()
