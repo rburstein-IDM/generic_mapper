@@ -15,7 +15,7 @@ Go from this:
 To this:
 ![Alt text](./plots_for_readme/readme_outputplot.png "")
 
-Since we aren't using covariates, this is really just a way to smooth over data. You'll notice in areas with no data we regress to the mean quite quickly. 
+Since we aren't using covariates, this is really just a way to smooth over data. You'll notice in areas with no data we regress to the mean quite quickly, but those areas have estimates with quite a bit of uncertainty as well. 
 
 Once you have the outputs, you can aggregate to any admin geography you wish. 
 
