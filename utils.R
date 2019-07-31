@@ -37,22 +37,23 @@ insert_raster <- function (raster, new_vals) {
 #' Note: Version 1: no covariates, no time, just a GP smoothing model
 #'
 #' @param data data frame where outcome and ss, and coordinates are (later covariates as well)
-#'    make sure xy coordinates are called 'lon' and 'lat'
+#'    make sure xy coordinates are called 'LONGNUM' and 'LATNUM'
 #' @param outcome_varname String. Name of outcome variable in data 
 #' @param ss_varname String. Name of sample size variable in data
+#' @param plot_mesh boolean. make a mesh plot, just for show
 #'
 #' @return list obkect of everything we need to run the inla spatial model
-prep_inla_objects <- function(data, outcome_varname, ss_varname){
+prep_inla_objects <- function(data, outcome_varname, ss_varname, plot_mesh = TRUE){
   
   
   # make a clean design matrix
-  data          <- setDT(data)[,c(outcome_varname,ss_varname,'lon','lat'), with = FALSE]
+  data          <- setDT(data)[,c(outcome_varname,ss_varname,'LONGNUM','LATNUM'), with = FALSE]
   message( sprintf('Original dataset has %i rows.', nrow(data)))
-  data          <- na.rm(data)
+  data          <- na.omit(data)
   message( sprintf('NA-removed dataset has %i rows.', nrow(data)))
   outcome       <- data[[outcome_varname]]
   N             <- data[[ss_varname]]     
-  locs          <- cbind(data$lon, data$lat)
+  locs          <- cbind(data$LONGNUM, data$LATNUM)
   design_matrix <- data.frame(int = rep(1, nrow(data)))
   
   # make a mesh
@@ -61,7 +62,11 @@ prep_inla_objects <- function(data, outcome_varname, ss_varname){
                        max.edge = c(.5,5),
                        offset   = 1,
                        cutoff   = 0.5)
-  plot(mesh);  points(locs, col = 'red')
+  
+  if(plot_mesh == TRUE){
+    plot(mesh)
+    points(locs, col = 'red')
+  }
   
   
   # make spde object
@@ -86,6 +91,8 @@ prep_inla_objects <- function(data, outcome_varname, ss_varname){
   
   # output a list object of everything we need to pass into inla
   return( list( outcome = outcome,
+                spde    = spde,
+                space   = space,
                 N       = N,
                 dm      = design_matrix,
                 mesh    = mesh,
@@ -107,6 +114,8 @@ prep_inla_objects <- function(data, outcome_varname, ss_varname){
 #' @return
 #' @export Fitted inla model object
 run_inla_model <- function(input, model_family){
+  spde  <- input[['spde']]
+  space <- input[['space']]
   if(!tolower(model_family) %in% c('binomial','gaussian'))
     stop('Currently only support for binomial or gaussian models')
   
@@ -117,6 +126,9 @@ run_inla_model <- function(input, model_family){
                 control.predictor = list(A       = inla.stack.A(input_obj[['stack']]),
                                          link    = 1,
                                          compute = FALSE),
+                control.compute   = list(dic     = TRUE,
+                                         cpo     = TRUE,
+                                         config  = TRUE),
                 control.fixed     = list(expand.factor.strategy = 'inla'),
                 family            = 'binomial',
                 num.threads       = 1,
@@ -129,6 +141,9 @@ run_inla_model <- function(input, model_family){
                 data              = inla.stack.data(input_obj[['stack']]),
                 control.predictor = list(A       = inla.stack.A(input_obj[['stack']]),
                                          compute = FALSE),
+                control.compute   = list(dic     = TRUE,
+                                         cpo     = TRUE,
+                                         config  = TRUE),
                 control.fixed     = list(expand.factor.strategy = 'inla'),
                 family            = 'Gaussian',
                 num.threads       = 1,
@@ -149,11 +164,11 @@ run_inla_model <- function(input, model_family){
 #' @param fitted fitted model object
 #' @param input data inputs that went into inla mode
 #' @param ndraws number of posterior draws to take
-#' @param predfr prediction frame
+#' @param predframe prediction frame
 #' @param ext_raster prediction raster matching prediction frame
 #'
 #' @return list of three output objects. cell_pred: pixel draws, prediction summary, raster formation prediction summary
-inla_predict <- function(fitted, input, ndraws, predfr, ext_raster){
+inla_predict <- function(fitted, input, ndraws, predframe, ext_raster){
   
 
   ##  get posterior draws for each covariate
@@ -165,16 +180,18 @@ inla_predict <- function(fitted, input, ndraws, predfr, ext_raster){
   s_idx <- grep('^space.*', par_names) # spatial effects
   pred_s <- sapply(draws, function (x) x$latent[s_idx])
   pred_l <- sapply(draws, function (x) x$latent[l_idx])
+  
+  if(length(fitted$names.fixed) == 1) pred_l <- t(pred_l)
   rownames(pred_l) <- fitted$names.fixed
   
   # output coordinates
-  coords <- cbind(predfr$lon,predfr$lat)
+  coords <- cbind(predframe$lon,predframe$lat)
   
   # Projector matrix from location of REs to prediction frame coordinates
   A.pred <- inla.spde.make.A(mesh = input[['mesh']], loc = coords)
   
-  predfr$int <- 1
-  vals <- predfr$int #predfr[, c('int',fevars), with=FALSE]
+  predframe$int <- 1
+  vals <- predframe$int #predfr[, c('int',fevars), with=FALSE]
   
   # get ndraws obs at each predframe location
   cell_l <- unname(as.matrix(as(data.matrix(vals), "dgeMatrix") %*% pred_l))
@@ -188,7 +205,7 @@ inla_predict <- function(fitted, input, ndraws, predfr, ext_raster){
   pred_q     <- rowQuantiles(cell_pred, probs = c(0.025, 0.975))
   inlapredfr <- data.frame(mean=rowMeans(cell_pred),lower=pred_q[,1],upper=pred_q[,2])
   predsumr   <- insert_raster(ext_raster,inlapredfr) 
-  
+  predsumr   <- mask(predsumr, ext_raster)
   
   return(list(cell_pred    = cell_pred,
               pred_summary = inlapredfr,
@@ -209,17 +226,17 @@ inla_predict <- function(fitted, input, ndraws, predfr, ext_raster){
 #' Aggregate draws to the adminX level
 #'
 #' @param pred inla_predict
-#' @param predfr prediction frame
+#' @param predframe prediction frame
 #' @param collapse_to String. Name of column in predfr to collapse to
 #'
 #' @return DT summarizing median, 2.5% and 97.5% quantiles
-aggregate_results <- function(pred, predfr){
+aggregate_results <- function(pred, predframe){
   
   # make a prediction frame
-  tmp <- data.table(pred$cell_pred, adm=predfr[['collapse_to']], pop=predfr$u5pop)
+  tmp <- data.table(pred$cell_pred, adm = predframe[['collapse_to']], pop = predframe$pop)
   
   # define draw columns
-  cols <- paste0('V',1:ncols(pred$cell_pred))
+  cols <- paste0('V',1:ncol(pred$cell_pred))
   
   # collapse each draw, population weighted, to the admin 2
   tmp  <- tmp[, lapply(.SD, weighted.mean,w=pop,na.rm=TRUE), .SDcols = cols, by=adm]

@@ -23,11 +23,23 @@ family <- 'binomial'
 ndraws <- 100
 
 # outcome variable name
-outcome_varname <- 'dpt'
+outcome_varname <- 'cookfuel_solid'
 
 # where your local copy of the generic_mapper repo is (clone from here: https://github.com/rburstein-IDM/generic_mapper)
 codepath  <- 'C:/Users/rburstein/OneDrive - IDMOD/code/generic_mapper'
 
+# shapefile name to use (make sure its in './Dropbox (IDM)/generic_mapper/data/shp')
+shpfname <- 'alhasan-pk-adm-2-with-clusters.shp'
+
+# shapefile name to use (make sure its in './Dropbox (IDM)/generic_mapper/data/pop_rasters')
+popfname <- 'wp-adj-pak-2015-5km.tif'
+
+# name of dataset file (make sure its in './Dropbox (IDM)/generic_mapper/data/prepped_input')
+# dataset name must follow the standard naming: <cntry>_<svyyr>_<outcome_varname>.csv
+# datasets should be prepared at the individual or HH level, with the following variables:
+# LATNUM, LONGNUM, CLUSTER, <outcome_varname> (if the outcome is binomial it must be 0, 1 at this level)
+cntry <- 'pak'
+svyyr <- 2017
 
 
 ## ###########################################################
@@ -55,190 +67,76 @@ source(sprintf('%s/utils.R', codepath))
 
 ## Load in data and shapes
 # prepped data
-d       <- fread(sprintf('%s/data/prepped_input/XXXX.csv',datpath))
+d       <- fread(sprintf('%s/data/prepped_input/%s-%s-%s.csv', root, cntry, svyyr, outcome_varname))
 
 # load shapefile
-shp <- st_read(dsn = sprintf('%s/WHO_POLIO_GLOBAL_GEODATABASE.gdb',datpath), layer = 'GLOBAL_ADM2')
-shp <- subset(shp, as.Date(ENDDATE) >= Sys.Date() & ADM0_VIZ_NAME == "Democratic Republic of the Congo")
+shp <- st_read(sprintf('%s/data/shp/%s', root, shpfname))
+shp$id <- 1:nrow(shp)
 
 # load population raster
-#TODO
-
+pop <- raster(sprintf('%s/data/pop_rasters/%s', root, popfname))
 
 
 ## ###########################################################
 ## Clean up and prep data
 
-# make a raster version of the country shapefile
-ext_raster <- trim(fasterize(shp, pop))
 
 # rasterize the gadm file
-rshp <- fasterize(sf = shp, raster = pop, field = 'id')
+ext_raster <- fasterize(sf = shp, raster = pop, field = 'id')
+
 
 # make a prediction frame representing the full raster
-predfr <- data.table(idx = 1:ncell(get(rlist[1])), adm2 = as.vector(rshp))
+predfr <- data.table(idx = 1:ncell(pop), pop = as.vector(pop), collapse_to = as.vector(ext_raster))
 
 # add lat and lon to prediction frame
 predfr[, lon := coordinates(ext_raster)[,1]]
 predfr[, lat := coordinates(ext_raster)[,2]]
 
 
+# drop any clusters that say they are at zero zero
+d <- d[LATNUM != 0 & LONGNUM != 0]
+
+# collapse the dhs data to the cluster level
+if(tolower(family) == 'binomial'){
+  dagg <- d[, .(outcome = sum(get(outcome_varname), na.rm = TRUE),
+                N       = sum(!is.na(get(outcome_varname)))), 
+            by = .(LATNUM, LONGNUM, CLUSTER)]
+  dagg[, tomap := outcome/N]
+} else if(tolower(family) == 'gaussian'){
+  dagg <- d[, .(outcome = mean(get(outcome_varname), na.rm = TRUE),
+                N       = sum(!is.na(get(outcome_varname)))), 
+            by = .(LATNUM, LONGNUM, CLUSTER)]
+  dagg[, tomap := outcome]
+} else {
+  stop('Family must be binomial or gaussian')
+}
+
+# make some quick plots showing data
+hist(dagg$tomap)
+
+
+ggplot(dagg) + geom_sf(data = shp, fill = 'white', colour = 'grey') + theme_minimal() + coord_sf(datum = NA) + 
+  geom_point(aes(LONGNUM,LATNUM,size=N,color=tomap),alpha=0.75, stroke = 0, shape = 16) + 
+  scale_color_gradientn(values = c(0,0.8,1.0), colours = c("#a6172d","#EFDC05","#4f953b") ) +
+  ylab('') + xlab('')
 
 
 ## ###########################################################
 ## Basic geostats model using INLA (currently with most settings (such as priors) at default)
 
 # get together all the various objects needed for inla to fit the model
-input_obj <- prep_inla_objects(data = d, outcome_varname = outcome_varname, ss_varname = 'N')
+input_obj <- prep_inla_objects(data = dagg, outcome_varname = 'outcome', ss_varname = 'N', plot_mesh = TRUE)
 
 # fit inla model
 res_fit <- run_inla_model(input = input_obj, model_family = family)
 summary(res_fit)
   
 # do prediction from the fitted model
-pred <- inla_predict(fitted = res_fit, input = input_obj, ndraws = ndraws, predfr = predfr, ext_raster = ext_raster)
-
-# the outputs of prediction with match ext_raster. In the following, aggregate them to the inputted shapefile
-agg_res  <- aggregate_results()
+pred <- inla_predict(fitted = res_fit, input = input_obj, ndraws = ndraws, predframe = predfr, ext_raster = ext_raster)
 
 
-
-
-
-## ###########################################################
-## Plot some outputs
-
-
-
-# shapefile and plot
-shp <- merge(shp, out, by = 'id', all.x = TRUE )
-
-# plots
-g1 <- ggplot(shp) + geom_sf(aes(fill = ch_median*100)) + coord_sf(datum = NA) + 
-  theme_minimal() + theme(legend.position="bottom") +
-  scale_fill_gradientn(colours=brewer.pal(7,"YlGnBu"), 
-                       name = 'Seropositive Children (%) \nMedian Estimate') 
-g2 <- ggplot(shp) + geom_sf(aes(fill = ch_lower*100)) + coord_sf(datum = NA) + 
-  theme_minimal() + #theme(legend.position="bottom")+
-  scale_fill_gradientn(limits = c(60,100), colours=brewer.pal(7,"Greys"), name = 'Lower UI') 
-g3 <- ggplot(shp) + geom_sf(aes(fill = ch_upper*100)) + coord_sf(datum = NA) + 
-  theme_minimal() + #theme(legend.position="bottom")+
-  scale_fill_gradientn(limits = c(60,100), colours=brewer.pal(7,"Greys"), name = 'Upper UI') 
-
-g1
-grid.arrange(g2,g3,nrow=2)
-
-
-g1 <- ggplot(shp) + geom_sf(aes(fill = ad_median*100)) + coord_sf(datum = NA) + theme_minimal() +
-  scale_fill_gradientn(colours=brewer.pal(7,"YlGnBu"), 
-                       name = 'Seropositive Adults (%) \nMedian Estimate') + theme(legend.position="bottom") 
-g2 <- ggplot(shp) + geom_sf(aes(fill = ad_lower*100)) + coord_sf(datum = NA) + theme_minimal() +
-  scale_fill_gradientn(limits = c(35,82), colours=brewer.pal(7,"Greys"), name = 'Lower UI') 
-g3 <- ggplot(shp) + geom_sf(aes(fill = ad_upper*100)) + coord_sf(datum = NA) + theme_minimal() +
-  scale_fill_gradientn(limits = c(35,82), colours=brewer.pal(7,"Greys"), name = 'Upper UI') 
-
-g1
-grid.arrange(g2,g3,nrow=2)
-
-
-
-g1 <- ggplot(shp) + geom_sf(aes(fill = df_median*100)) + coord_sf(datum = NA) + theme_minimal() +
-  scale_fill_gradientn(colours=brewer.pal(7,"YlOrRd"), 
-                       name = 'Difference in Seroprevalence\nMedian Estimate')  + theme(legend.position="bottom") 
-g2 <- ggplot(shp) + geom_sf(aes(fill = df_lower*100)) + coord_sf(datum = NA) + theme_minimal() +
-  scale_fill_gradientn(limits = c(-10,60), colours=brewer.pal(7,"Greys"), name = 'Lower UI') 
-g3 <- ggplot(shp) + geom_sf(aes(fill = df_upper*100)) + coord_sf(datum = NA) + theme_minimal() +
-  scale_fill_gradientn(limits = c(-10,60), colours=brewer.pal(7,"Greys"), name = 'Upper UI') 
-
-g1
-grid.arrange(g2,g3,nrow=2)
-
-
-
-
-## Plot Covariate effects ladderplot
-tmp <- data.table(summary(ch_inla_mod$model_object)$fixed)
-tmp$var <- c('intercept',vars)
-
-ggplot(tmp, aes(x=var,ymin=`0.025quant`,ymax=`0.975quant`,y=mean)) +
-  geom_errorbar(width = .1) + theme_minimal() + 
-  geom_hline(yintercept =0,color='red') +
-  geom_point() +
-  xlab('Covariate Name') + ylab('<--- (-)   Effect size (log-odds)   (+) --->')
-
-
-# univariates
-outy <- data.table()
-for(v in paste0(tmp$var[-1])){ #},'_cs')){
-  form <- as.formula(sprintf('cbind( type2, N-type2 ) ~ %s',v))
-  m    <- summary(glm(form,data=dagg[adult==0],family='binomial'))$coefficients[2,1]
-  sd   <- summary(glm(form,data=dagg[adult==0],family='binomial'))$coefficients[2,2]
-  tmpy <- data.table(var=v,mean=exp(m),lower=exp(m-1.96*sd),upper=exp(m+1.96*sd))
-  outy <- rbind(outy,tmpy)
-}
-  
-ggplot(outy, aes(x=var,ymin=lower,ymax=upper,y=mean)) +
-  geom_errorbar(width = .1) + theme_minimal() + 
-  geom_hline(yintercept =1,color='red') +
-  geom_point() +
-  xlab('Covariate Name') + ylab('<--- (-)   Odds Ratio   (+) --->')
-
-
-
-
-## Do rank districts
-
-
-
-
-
-
-
-
-
-
-
-######################################
-# how do estimates compare to cluster level data?
-res <- data.table(y = dagg[[outcometype]], N = dagg$N,
-              raster::extract(pred, cbind(dagg$lon,dagg$lat)))
-res[, prev := y/N +rnorm(nrow(res),0,0.01)] # jitter for plotting
-
-ggplot(res, aes(x=prev,y=mean,ymin=lower,ymax=upper)) + theme_minimal() + 
-  geom_abline(intercept=0,slope=1,color='red') +
-  xlab('Empirical Estimate') + ylab('Model Estimate') +
-  geom_errorbar(alpha=0.25) + geom_point(alpha=0.75,size=0.5)
-
-
-
-
-######################################
-# population at risk
-
-pred_popatrisk <- inlapredfr*cbind(predfr$u5pop)
-
-# about 1 million children at risk, type 2
-sum(pred_popatrisk[,1], na.rm = TRUE)
-sum(pred_popatrisk[,2], na.rm = TRUE)
-sum(pred_popatrisk[,3], na.rm = TRUE)
-
-plot(insertRaster(ext_raster,cbind(log(pred_popatrisk)[,1])), main='log population at risk')
-
-
-
-
-
-## TODOS: 
-# add a campaign covariate
-# quality, residual analysis
-# adults map -> joint fit with kids, and with other types
-
-
-
-
-
-
-
+# plot the output raster
+plot(pred$raster, col= c("#a6172d","#EFDC05","#4f953b"))
 
 
 
