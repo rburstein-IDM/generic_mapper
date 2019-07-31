@@ -141,7 +141,3 @@ plot(pred$raster, col= c("#a6172d","#EFDC05","#4f953b"))
 
 
 
-
-
-
-

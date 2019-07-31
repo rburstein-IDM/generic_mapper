@@ -1,4 +1,4 @@
-# Generic Code for running geostatistical models with INLA
+# Generic Code for running simple spatial smoothing models with INLA
 
 Version 0.0.1
 
