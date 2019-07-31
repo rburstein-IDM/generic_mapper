@@ -6,7 +6,7 @@ The current version of this script takes as input a subset of DHS data with GPS 
 
 There are two scripts in this repo right now, `utils.R` is simply a set of helper functions. Start with `example_script.R`, which will walk you through the process from pulling in data to making a smooth map. The example script uses as an example the outcome of proportion of households using solid fuel from the 2017 Pakihstan DHS.
 
-Note for IDM users, there is quite a bit of commenting in the example script, which should make it easy enough to adapt this example for other indicators you wish to spatially smooth.
+Note for IDM users, there is quite a bit of commenting in the example script, which should make it easy enough to adapt this example for other indicators you wish to spatially smooth. You'll need dropbox access to the `generic_mapper` directory to make things run smoothly - just ask me to add you if you need it. 
 
 Go from this:
 ![Alt text](./plots_for_readme/readme_inputmap.png "")
