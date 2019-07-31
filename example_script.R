@@ -48,7 +48,7 @@ for(l in libs){
 
 ## locations - relative to user, but in AMUG Dropbox. Make sure you have access to AMUG to use
 user      <- Sys.info()[['user']]
-root      <- sprintf('C:/Users/%s/Dropbox (IDM)/AMUG/generic_mapper',user)
+root      <- sprintf('C:/Users/%s/Dropbox (IDM)/generic_mapper',user)
 
 # Source the utility functions 
 source(sprintf('%s/utils.R', codepath))
