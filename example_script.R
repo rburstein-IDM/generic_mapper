@@ -136,8 +136,5 @@ pred <- inla_predict(fitted = res_fit, input = input_obj, ndraws = ndraws, predf
 
 
 # plot the output raster
-plot(pred$raster, col= c("#a6172d","#EFDC05","#4f953b"))
-
-
-
+plot(pred$raster, col= c("#a6172d","#EFDC05","#4f953b"), ncol=3)
 

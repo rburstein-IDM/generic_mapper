@@ -14,10 +14,10 @@ plotdir  <- 'C:/Users/rburstein/Desktop/tmpimgs'
 
 # simulation paameters
 set.seed(12334) 
-sims            <- 10     # how many spatial points to simulate
+sims            <- 100    # how many spatial points to simulate
 xlim <- ylim    <- c(0,10) # extent of spatial domain  
 res             <- 100     # number of pixels per row/column
-mean_samplesize <- 100    # mean N for each binomial sample
+mean_samplesize <- 100     # mean N for each binomial sample
 posterior_draws <- 100     # how many draws to take from the posterior 
 
 
@@ -74,7 +74,8 @@ ggplot(d, aes(p_true, y_obs/N)) + geom_point(aes(size = N)) +
 
 # true underlying probability surface
 ggplot() + geom_raster(data = rf_df, aes(x,y,fill=plogis(sim)))  +
-  scale_fill_viridis_c(option = "inferno", limits = c(0,1)) + labs(fill = 'Truth') + 
+  scale_fill_viridis_c(option = "inferno", limits = c(0,1)) + labs(fill = 'Truth') +
+  geom_point(data= d, aes(x=lon, y=lat, size = y_obs/N), shape = 1) +
   theme(axis.title = element_blank(), axis.text = element_blank(),
         axis.ticks = element_blank(), panel.background = element_blank()) 
 
@@ -183,7 +184,7 @@ ggplot(out, aes(y = value, x = px/res)) + geom_line(aes(group = draw), alpha=0.1
 drawsr <- data.table(cbind(cell_pred[,1:20]), x= coords[,1], y= coords[,2])
 files <- c()
 for(i in 1:20){
-  f <- sprintf('%s/%s.png',i)
+  f <- sprintf('%s/%s.png',plotdir,i)
   files <- c(files, f)
   png(f)
   tmp <- drawsr[, c(paste0('V',i),'x','y'), with = FALSE]
@@ -195,7 +196,7 @@ for(i in 1:20){
   dev.off()
 }
 
-image_write(image_animate(image_read(files),fps=2), "%s/animation.gif")
+image_write(image_animate(image_read(files),fps=2), sprintf("%s/animation.gif",plotdir))
 
 g2 + gopt +  geom_point(data=d, aes(x=lat,y=lon))
 
@@ -206,12 +207,30 @@ range_postdens <- data.table(inla.tmarginal(function(x) sqrt(8)/x, outp.field$ma
 var_postdens   <- data.table(inla.tmarginal(function(x) x, outp.field$marginals.variance.nominal[[1]]))
 
 g1 <- ggplot(range_postdens, aes(x,y)) + theme_bw() + geom_line(size=2) + xlab('Matern Range') +
-  ylab('Marginal Posterior Density') + geom_vline(xintercept = 5, color = 'red')
+  ylab('Marginal Posterior Density') 
 g2 <- ggplot(var_postdens, aes(x,y))   + theme_bw() + geom_line(size=2) + xlab('Nominal Variance') + 
-  ylab('Marginal Posterior Density') + geom_vline(xintercept = .5^2, color = 'red')
+  ylab('Marginal Posterior Density')
 grid.arrange(g1,g2)
 
 # joint hyperparameter density
 joint <- data.table(fit$joint.hyper)
 names(joint) <- c('theta1','theta2','dens')
 ggplot() + geom_point(data=joint, aes(x=theta1,y=theta2,color=dens), size = 9)
+
+
+
+# lets pretend we have 4 even areas we care to aggregate
+adm <- c(rep(rep(c(1,2),each=res/2),res/2),rep(rep(c(3,4),each=res/2),res/2))
+plot(insert_raster(r,cbind(adm))) # confirm its 4 squares
+cp <- data.table(adm=adm,pop=1,cell_pred)
+cols <- paste0('V',1:posterior_draws)
+cp  <- cp[, lapply(.SD, weighted.mean,w=pop,na.rm=TRUE), .SDcols = cols, by=adm]
+cp <- cp[,  as.list(quantile(.SD,c(0.5,0.025,0.975),na.rm=TRUE)), by=adm, .SDcols=cols]
+tru <- data.table(truth=rf_df$sim,adm=adm)[, .(truth = plogis(mean(truth))), by = adm]
+cp <- merge(cp, tru, by = 'adm')
+names(cp) <- c('admin','median','lower','upper','truth')
+
+ggplot(data=cp, aes(x=factor(admin))) + geom_point(aes(y=truth), size=5, color='blue', shape=1) +
+  geom_point(aes(y=median)) + ylim(.35,.75) +
+  geom_errorbar(aes(ymin=lower,ymax=upper),width=.1) + theme_bw() + xlab('Admin Area') + ylab('')
+
