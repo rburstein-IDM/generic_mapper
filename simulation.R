@@ -184,7 +184,7 @@ out_true <- out[, .(value = plogis(mean(truth))), by = px]
 ggplot(out, aes(y = value, x = px/res)) + geom_line(aes(group = draw), alpha=0.05) +
   scale_color_viridis_c(option = "inferno", limits = c(0,1)) + ylim(0.25,0.85) +
   theme_bw() + ylab('Posterior Draw Value') + xlab('Lat') +
-  geom_line(data=out_mean, lwd = 2, aes( color = value)) + #theme(legend.position = 'none') +
+  geom_line(data=out_mean, lwd = 2, aes( color = value)) + theme(legend.position = 'none') +
   geom_line(data=out_true, lwd = 4,  color = 'blue', alpha = 0.3) +
   geom_line(data=out[ld%in%min(ld)], color='green') + 
   geom_line(data=out[draw==1],       color='green',lty='dotted')
