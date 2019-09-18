@@ -14,16 +14,17 @@ plotdir  <- 'C:/Users/rburstein/Desktop/tmpimgs'
 
 # simulation paameters
 set.seed(12334) 
-sims            <- 100    # how many spatial points to simulate
+sims            <- 100   # how many spatial points to simulate
 xlim <- ylim    <- c(0,10) # extent of spatial domain  
 res             <- 100     # number of pixels per row/column
 mean_samplesize <- 100     # mean N for each binomial sample
-posterior_draws <- 100     # how many draws to take from the posterior 
+posterior_draws <- 100    # how many draws to take from the posterior 
 
 
 
 # load (and if needed, install) libraries
-for(l in c('RandomFields', 'raster', 'data.table', 'ggplot2', 'lhs', 'INLA', 'gridExtra', 'magick')){
+for(l in c('RandomFields', 'raster', 'data.table', 'ggplot2', 'matrixStats',
+           'lhs', 'INLA', 'gridExtra', 'magick','geostatsp')){
   if(!l %in% installed.packages()[,1])
     install.packages(l)
   library(l, character.only = TRUE)
@@ -123,6 +124,9 @@ draws     <- inla.posterior.sample(posterior_draws, fit)
 s_idx <- grep('^space.*', rownames(draws[[1]]$latent)) # spatial effects
 pred_s <- sapply(draws, function (x) x$latent[s_idx])
 
+# lets look at the mode (replace the first draw with it)
+pred_s[,1] <- fit$summary.random$`space`$mode
+
 # Extract output coordinates (prediction frame across the full spatial domain)
 coords <- coordinates(r)
 
@@ -138,9 +142,12 @@ inlapredfr <- data.frame(mean  = rowMeans(cell_pred),
                          lower = pred_q[,1],
                          upper = pred_q[,2], 
                          x     = coords[,1], 
-                         y     =coords[,2])
+                         y     = coords[,2])
 predsumr   <- insert_raster(r,inlapredfr[,1:3]) 
 
+# get the modal draw another way
+ld       <- sapply(draws, function (x) x$logdens$joint )
+modedraw <- which(ld == min(ld))
 
 #####################
 #### PLOT PREDICTIONS
@@ -170,14 +177,17 @@ for(px in 0:(res-1)){
   tmp$truth <- rf_df[px*res+40,]$sim
   out <- rbind(out,tmp)
 }
+out <- merge(out, data.table(ld=ld,draw=1:posterior_draws), by = 'draw')
 out_mean <- out[, .(value = mean(value)),         by = px]
 out_true <- out[, .(value = plogis(mean(truth))), by = px]
 
-ggplot(out, aes(y = value, x = px/res)) + geom_line(aes(group = draw), alpha=0.15) +
-  scale_color_viridis_c(option = "inferno", limits = c(0,1)) + ylim(0.15,0.85) +
+ggplot(out, aes(y = value, x = px/res)) + geom_line(aes(group = draw), alpha=0.05) +
+  scale_color_viridis_c(option = "inferno", limits = c(0,1)) + ylim(0.25,0.85) +
   theme_bw() + ylab('Posterior Draw Value') + xlab('Lat') +
-  geom_line(data=out_mean, lwd = 2, aes( color = value)) + theme(legend.position = 'none') +
-  geom_line(data=out_true, lwd = 4, color = 'blue', alpha = 0.3) 
+  geom_line(data=out_mean, lwd = 2, aes( color = value)) + #theme(legend.position = 'none') +
+  geom_line(data=out_true, lwd = 4,  color = 'blue', alpha = 0.3) +
+  geom_line(data=out[ld%in%min(ld)], color='green') + 
+  geom_line(data=out[draw==1],       color='green',lty='dotted')
 
 
 # plot a few map draws and animate them
